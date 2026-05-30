@@ -80,8 +80,8 @@ def main():
     parser.add_argument(
         "--target-hour",
         type=int,
-        default=12,
-        help="Target hour (0-23) to choose for the daily photo (default: 12 / noon).",
+        default=None,
+        help="Target hour (0-23) to choose for the daily photo (default: 12 / noon). Requires --daily.",
     )
     parser.add_argument("--fps", type=int, default=24, help="Framerate of the output video (default: 24)")
     parser.add_argument(
@@ -96,6 +96,11 @@ def main():
     )
 
     args = parser.parse_args()
+
+    if args.target_hour is not None and not args.daily:
+        parser.error("--target-hour requires --daily.")
+
+    target_hour = args.target_hour if args.target_hour is not None else 12
 
     source_dir = Path(args.dir_path).resolve()
     if not source_dir.is_dir():
@@ -143,7 +148,7 @@ def main():
         selected_files = all_files
 
     if args.daily:
-        print(f"Selecting one photo per day closest to {args.target_hour:02d}:00...")
+        print(f"Selecting one photo per day closest to {target_hour:02d}:00...")
         by_day = {}
         for file_path in selected_files:
             dt = get_image_datetime(file_path)
@@ -158,7 +163,7 @@ def main():
         selected_files = []
         for d in sorted(by_day.keys()):
             day_photos = by_day[d]
-            chosen = min(day_photos, key=lambda x: abs(x[1].hour - args.target_hour))
+            chosen = min(day_photos, key=lambda x: abs(x[1].hour - target_hour))
             selected_files.append(chosen[0])
 
     if not selected_files:
