@@ -7,9 +7,11 @@
 
 import argparse
 import concurrent.futures
+import re
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 from PIL import Image
@@ -30,6 +32,34 @@ def get_image_iso(image_path: Path) -> int | None:
     return None
 
 
+FILENAME_PATTERN = re.compile(r"(\d{8})_(\d{6})")
+
+
+def get_image_datetime(image_path: Path) -> datetime | None:
+    """Extract datetime from filename or EXIF metadata."""
+    # 1. Try parsing from the filename first (instant)
+    match = FILENAME_PATTERN.search(image_path.name)
+    if match:
+        try:
+            return datetime.strptime(f"{match.group(1)}_{match.group(2)}", "%Y%m%d_%H%M%S")
+        except ValueError:
+            pass
+
+    # 2. Fallback to EXIF metadata (requires opening file)
+    try:
+        with Image.open(image_path) as img:
+            exif = img._getexif()
+            if exif:
+                # 36867 is DateTimeOriginal, 306 is DateTime
+                for tag in (36867, 306):
+                    dt_str = exif.get(tag)
+                    if dt_str:
+                        return datetime.strptime(dt_str, "%Y:%m:%d %H:%M:%S")
+    except Exception:
+        pass
+    return None
+
+
 def main():
     """Parse CLI arguments, filter images, and compile the timelapse video."""
     parser = argparse.ArgumentParser(
@@ -45,6 +75,13 @@ def main():
     )
     parser.add_argument(
         "--daytime-only", action="store_true", help="Filter out night photos (keeps only photos where ISO < 800)"
+    )
+    parser.add_argument("--daily", action="store_true", help="Select only a single photo per calendar day.")
+    parser.add_argument(
+        "--target-hour",
+        type=int,
+        default=12,
+        help="Target hour (0-23) to choose for the daily photo (default: 12 / noon).",
     )
     parser.add_argument("--fps", type=int, default=24, help="Framerate of the output video (default: 24)")
     parser.add_argument(
@@ -104,6 +141,25 @@ def main():
         selected_files.sort(key=lambda p: p.name)
     else:
         selected_files = all_files
+
+    if args.daily:
+        print(f"Selecting one photo per day closest to {args.target_hour:02d}:00...")
+        by_day = {}
+        for file_path in selected_files:
+            dt = get_image_datetime(file_path)
+            if dt:
+                d = dt.date()
+                if d not in by_day:
+                    by_day[d] = []
+                by_day[d].append((file_path, dt))
+            else:
+                print(f"Warning: Could not determine date for {file_path.name}, skipping.")
+
+        selected_files = []
+        for d in sorted(by_day.keys()):
+            day_photos = by_day[d]
+            chosen = min(day_photos, key=lambda x: abs(x[1].hour - args.target_hour))
+            selected_files.append(chosen[0])
 
     if not selected_files:
         print("No photos matched the filtering criteria.", file=sys.stderr)
