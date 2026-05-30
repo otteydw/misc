@@ -16,6 +16,8 @@ from pathlib import Path
 
 from PIL import Image
 
+DEFAULT_BAR_HEIGHT = 460
+
 
 def get_image_iso(image_path: Path) -> int | None:
     """Extract ISO speed rating from image EXIF data."""
@@ -92,6 +94,17 @@ def main():
         help="Resolution to scale the output video to (default: 4k)",
     )
     parser.add_argument(
+        "--crop-bar",
+        action="store_true",
+        help="Crop the camera info bar from the bottom of each frame.",
+    )
+    parser.add_argument(
+        "--bar-height",
+        type=int,
+        default=DEFAULT_BAR_HEIGHT,
+        help=f"Height in pixels of the bottom bar to crop (default: {DEFAULT_BAR_HEIGHT}). Requires --crop-bar.",
+    )
+    parser.add_argument(
         "--dry-run", action="store_true", help="Dry run: list photos and build ffmpeg command without encoding."
     )
 
@@ -99,6 +112,9 @@ def main():
 
     if args.target_hour is not None and not args.daily:
         parser.error("--target-hour requires --daily.")
+
+    if args.bar_height != DEFAULT_BAR_HEIGHT and not args.crop_bar:
+        parser.error("--bar-height requires --crop-bar.")
 
     target_hour = args.target_hour if args.target_hour is not None else 12
 
@@ -204,13 +220,18 @@ def main():
         "yuv420p",  # Pixel format for compatibility
     ]
 
-    # Add resolution filter
+    # Build video filter chain (crop must come before scale)
+    vf_filters = []
+    if args.crop_bar:
+        vf_filters.append(f"crop=iw:ih-{args.bar_height}:0:0")
     if args.resolution == "4k":
-        ffmpeg_cmd.extend(["-vf", "scale=3840:-2"])
+        vf_filters.append("scale=3840:-2")
     elif args.resolution == "1080p":
-        ffmpeg_cmd.extend(["-vf", "scale=1920:-2"])
+        vf_filters.append("scale=1920:-2")
     elif args.resolution == "original":
-        ffmpeg_cmd.extend(["-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2"])
+        vf_filters.append("scale=trunc(iw/2)*2:trunc(ih/2)*2")
+    if vf_filters:
+        ffmpeg_cmd.extend(["-vf", ",".join(vf_filters)])
 
     # Output path
     ffmpeg_cmd.append(args.output)
